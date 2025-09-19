@@ -313,12 +313,13 @@ if __name__ == "__main__":
     
     # Analyze a stock with both strategies
     ticker = sys.argv[1].upper()
+    targetprice_multiplier = float(sys.argv[2])
     
     # print("Running UNDERVALUED strategy...")
     results_undervalued = find_highest_roi_options(
         ticker=ticker,
         strategy="undervalued",
-        min_dte=15,
+        min_dte=45,
         investment_amount=5000,
         min_volume=100,
         min_oi=500
@@ -334,7 +335,7 @@ if __name__ == "__main__":
         investment_amount=5000,
         min_volume=100,
         min_oi=500,
-        target_price_multiplier=2
+        target_price_multiplier=targetprice_multiplier
     )
     print_results(results_catalyst)
     
