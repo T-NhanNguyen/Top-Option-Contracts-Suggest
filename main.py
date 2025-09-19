@@ -10,7 +10,7 @@ def find_highest_roi_options(
     ticker: str,
     strategy: str = "undervalued",
     min_dte: int = 30,
-    max_dte: int = 90,
+    max_dte: int = 210,
     investment_amount: float = 10000,
     min_volume: int = 100,
     min_oi: int = 500,
@@ -318,7 +318,7 @@ if __name__ == "__main__":
     results_undervalued = find_highest_roi_options(
         ticker=ticker,
         strategy="undervalued",
-        min_dte=15,
+        min_dte=45,
         investment_amount=5000,
         min_volume=100,
         min_oi=500
@@ -334,7 +334,7 @@ if __name__ == "__main__":
         investment_amount=5000,
         min_volume=100,
         min_oi=500,
-        target_price_multiplier=2
+        target_price_multiplier=1.5
     )
     print_results(results_catalyst)
     
