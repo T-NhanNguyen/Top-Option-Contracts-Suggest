@@ -14,10 +14,12 @@ def find_highest_roi_options(
     investment_amount: float = 10000,
     min_volume: int = 100,
     min_oi: int = 500,
-    target_price_multiplier: float = 1.15
+    target_price_multiplier: float = 1.15,
+    use_taylor_series: bool = True,
+    forecast_move_percent: float = None
 ):
     """
-    Find highest ROI options based on specified strategy.
+    Find highest ROI options based on specified strategy with optional Taylor series adjustment.
 
     Parameters:
     ticker (str): Stock ticker symbol
@@ -27,7 +29,9 @@ def find_highest_roi_options(
     investment_amount (float): Amount to invest for ROI calculation
     min_volume (int): Minimum volume filter for liquidity
     min_oi (int): Minimum open interest filter for liquidity
-    target_price_multiplier (float): Target stock price as a multiple of current price (default: 1.15, used in catalyst strategy)
+    target_price_multiplier (float): Target stock price as a multiple of current price
+    use_taylor_series (bool): Whether to use Taylor series for ROI calculation
+    forecast_move_percent (float): Expected move percentage for Taylor series (e.g., 0.02 for 2%)
 
     Returns:
     dict: Analysis results with top ROI opportunities
@@ -38,6 +42,8 @@ def find_highest_roi_options(
     print(f"Analyzing {ticker} for {strategy} strategy with DTE >= {min_dte}...")
     if strategy == "catalyst":
         print(f"DTE range: {min_dte}-{max_dte}, Target price multiplier: {target_price_multiplier}")
+    if use_taylor_series:
+        print(f"Using Taylor series ROI calculation with {'default' if forecast_move_percent is None else f'{forecast_move_percent:.1%}'} move")
     print("=" * 60)
     
     # Get option chain analysis
@@ -75,9 +81,16 @@ def find_highest_roi_options(
                 # For catalyst, only include OTM calls
                 if strategy == "catalyst" and (opt_type != 'calls' or strike <= current_price):
                     continue
+                
+                # Check if required fields exist in the option data
+                required_fields = ['impliedVolatility', 'openInterest', 'volume', 'lastPrice']
+                if not all(field in option for field in required_fields):
+                    print(f"Skipping option {strike} {opt_type}: missing required fields")
+                    continue
+                    
                 all_strikes.append(strike)
                 strike_details[strike] = {
-                    'type': opt_type[:-1],  # 'calls' -> 'call', 'puts' -> 'put'
+                    'type': opt_type[:-1],
                     'expiration': expiry,
                     'dte': dte,
                     'iv': option['impliedVolatility'],
@@ -85,23 +98,22 @@ def find_highest_roi_options(
                     'volume': option['volume'],
                     'last_price': option['lastPrice']
                 }
-    
+
     # Remove duplicates and sort
     unique_strikes = sorted(list(set(all_strikes)))
-    
+
     if not unique_strikes:
         return {"error": f"No {'OTM call' if strategy == 'catalyst' else 'valid'} options found meeting criteria"}
-    
+
     # Calculate gamma for all strikes
-    # print("\nCalculating gamma exposure for strikes...")
     gamma_values = gamma_calculator.calculate_gamma_vectorized(
         S=current_price,
         strikes=np.array(unique_strikes),
-        T=min_dte/365,  # Conservative estimate
+        T=min_dte/365,
         r=0.05,
         sigma=analysis.get('average_implied_volatility', 0.3)
     )
-    
+
     # Create strike analysis DataFrame
     strike_analysis = []
     for strike, gamma in zip(unique_strikes, gamma_values):
@@ -118,25 +130,32 @@ def find_highest_roi_options(
                 'last_price': details['last_price'],
                 'gamma': gamma
             })
-    
+
     strike_df = pd.DataFrame(strike_analysis)
-    
+
+    # Check if required columns exist for filtering
+    required_columns = ['volume', 'oi']
+    if not all(col in strike_df.columns for col in required_columns):
+        missing_cols = [col for col in required_columns if col not in strike_df.columns]
+        print(f"Warning: Missing columns in strike_df: {missing_cols}. Available: {strike_df.columns.tolist()}")
+        return {"error": f"Missing required columns for liquidity filtering: {missing_cols}"}
+
     # Filter for liquid options
     liquid_options = strike_df[
         (strike_df['volume'] >= min_volume) & 
         (strike_df['oi'] >= min_oi)
     ]
+
     
     if liquid_options.empty:
         return {"error": f"No liquid {'OTM call' if strategy == 'catalyst' else 'valid'} options found meeting criteria"}
     
     # Calculate ROI based on strategy
-    # print(f"Calculating ROI for liquid options ({strategy} strategy)...")
     analyzer = OptionROIAnalyzer()
     analyzer.risk_free_rate = 0.05
     
     roi_results = []
-    
+
     for _, option in liquid_options.iterrows():
         try:
             # Validate IV to avoid unrealistic values
@@ -144,12 +163,29 @@ def find_highest_roi_options(
                 print(f"Warning: Extreme IV ({option['iv']:.2%}) for {option['type']} ${option['strike']} (DTE: {option['dte']})")
                 continue
 
+            # Check if dte exists and is a valid number
+            if 'dte' not in option or not isinstance(option['dte'], (int, float)) or pd.isna(option['dte']) or option['dte'] <= 0:
+                print(f"Skipping option with invalid DTE: {option.get('strike', 'unknown')}, DTE: {option.get('dte')}")
+                continue
+
+            dte_years = option['dte'] / 365.0
+            if dte_years <= 0:  # Skip if DTE is zero or negative
+                continue
+
+            delta = calculate_delta(
+                S=current_price,
+                K=option['strike'],
+                T=dte_years,
+                sigma=option['iv'],
+                option_type=option['type']
+            )
+
             # Calculate option price based on strategy
             if strategy == "undervalued":
                 calc_price = analyzer.calculate_black_scholes(
                     S=current_price,
                     K=option['strike'],
-                    T=option['dte']/365,
+                    T=dte_years,
                     r=analyzer.risk_free_rate,
                     sigma=option['iv'],
                     option_type=option['type']
@@ -158,7 +194,7 @@ def find_highest_roi_options(
                 calc_price = analyzer.calculate_black_scholes(
                     S=target_price,
                     K=option['strike'],
-                    T=option['dte']/365,
+                    T=dte_years,
                     r=analyzer.risk_free_rate,
                     sigma=option['iv'],
                     option_type='call'
@@ -175,16 +211,7 @@ def find_highest_roi_options(
             # Skip negative ROIs for all results
             if roi_percentage <= 0:
                 continue
-
-            # Calculate delta
-            delta = calculate_delta(
-                S=current_price,
-                K=option['strike'],
-                T=option['dte']/365,
-                sigma=option['iv'],
-                option_type=option['type']
-            )
-            
+                
             roi_results.append({
                 'strike': option['strike'],
                 'type': option['type'],
@@ -212,7 +239,10 @@ def find_highest_roi_options(
     roi_df = pd.DataFrame(roi_results)
     
     # Find best opportunities
-    best_roi = roi_df[roi_df['roi_percentage'] > 0].nlargest(10, 'roi_percentage')
+    if use_taylor_series:
+        best_roi = roi_df.nlargest(10, 'roi_percentage')
+    else:
+        best_roi = roi_df[roi_df['roi_percentage'] > 0].nlargest(10, 'roi_percentage')
     
     # Additional filters based on strategy
     if strategy == "undervalued":
@@ -239,46 +269,45 @@ def find_highest_roi_options(
         'max_dte': max_dte if strategy == "catalyst" else None,
         'investment_amount': investment_amount,
         'strategy': strategy,
+        'use_taylor_series': use_taylor_series,
+        'forecast_move_percent': forecast_move_percent,
         'best_roi_opportunities': best_roi.to_dict('records'),
         secondary_label: secondary_opportunities,
         'all_opportunities': roi_df.to_dict('records')
     }
 
 def print_results(results):
-    """Print formatted results from the analysis in a clean card-style format"""
+    """Print formatted results with Taylor series indicators"""
     if "error" in results:
         print(f"Error: {results['error']}")
         return
     
-    # Wrap output in a markdown code block for Discord/.md compatibility
-    # print("```markdown")
-    
-    # Strategy header
-    # strategy_label = "Calculated Underpriced Options" if results['strategy'] == "undervalued" else "Catalyst Strategy"
-    # print(f"**{results['ticker']} {strategy_label}**")
     print(f"\nSearch Date: {results['analysis_date']}")
     print(f"Current Price: ${results['current_price']:.2f}" + 
           (f" | Target: ${results['target_price']:.2f}" if results['strategy'] == 'catalyst' else ""))
     print(f"Buying Power: ${results['investment_amount']:,.0f}")
     print(f"DTE: {results['min_dte']}" + 
           (f"-{results['max_dte']}" if results['strategy'] == 'catalyst' else "+") + " days")
+    if results.get('use_taylor_series', False):
+        move_info = f"{results.get('forecast_move_percent', 'default'):.1%}" if results.get('forecast_move_percent') is not None else "default"
+        print(f"Method: Taylor Series ROI ({move_info} move)")
+    else:
+        print("Method: Traditional Black-Scholes")
     print()
     
     # Top ROI picks
     print("**Top ROI Picks**")
     top_picks = results.get('best_roi_opportunities', [])[:5]
     if not top_picks:
-        print("    Calculation didn't yield any worthy picks")
+        print("    No worthy picks found")
     else:
         for opp in top_picks:
-            if not all(key in opp for key in ['type', 'strike', 'expiration', 'dte', 'roi_percentage', 'iv', 'market_price']):
-                continue
             print(f"  {opp['type'].title()} ${opp['strike']:.1f} | Exp: {opp['expiration']} | DTE: {opp['dte']}")
             print(f"    ROI: {opp['roi_percentage']:.1f}% | IV: {opp['iv']:.2%}")
             print(f"    Market: ${opp['market_price']:.2f} | " + 
                   (f"Target: ${opp.get('calc_price', 0):.2f}" if results.get('strategy') == 'catalyst' else 
                    f"Theoretical: ${opp.get('calc_price', 0):.2f}"))
-            print(f"    Gamma: {(opp.get('gamma', 0) * 1000):.4f}e-3 | Delta: {(opp.get('delta', 0) * 1000):.4f}e-3")
+            print(f"    Gamma: {opp.get('gamma', 0):.6f} | Delta: {opp.get('delta', 0):.6f}")
             print(f"    OI: {opp.get('oi', 0):,} | Vol: {opp.get('volume', 0):,}")
             print()
     
@@ -288,45 +317,60 @@ def print_results(results):
     print(f"**{secondary_label}**")
     secondary_picks = results.get(secondary_key, [])[:5]
     if not secondary_picks:
-        print("    Calculation didn't yield any worthy picks")
+        print("    No worthy picks found")
     else:
         for opp in secondary_picks:
-            if not all(key in opp for key in ['type', 'strike', 'expiration', 'dte', 'roi_percentage', 'iv', 'market_price']):
-                continue
             print(f"  {opp['type'].title()} ${opp['strike']:.1f} | Exp: {opp['expiration']} | DTE: {opp['dte']}")
             print(f"    ROI: {opp['roi_percentage']:.1f}% | IV: {opp['iv']:.2%}")
             print(f"    Market: ${opp['market_price']:.2f} | " + 
                   (f"Target: ${opp.get('calc_price', 0):.2f}" if results.get('strategy') == 'catalyst' else 
                    f"Theoretical: ${opp.get('calc_price', 0):.2f}"))
-            print(f"    Gamma: {(opp.get('gamma', 0) * 1000):.4f}e-3 | Delta: {(opp.get('delta', 0) * 1000):.4f}e-3")
+            print(f"    Gamma: {opp.get('gamma', 0):.6f} | Delta: {opp.get('delta', 0):.6f}")
             print(f"    OI: {opp.get('oi', 0):,} | Vol: {opp.get('volume', 0):,}")
             print()
-    
-    # print("```")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 main.py [ticker]")
+    if len(sys.argv) < 2:
+        print("Usage: python3 main.py [ticker] [--taylor] [--move PERCENT]")
+        print("Options:")
+        print("  --taylor     Use Taylor series ROI calculation (default: False)")
+        print("  --move X     Expected move percentage for Taylor series (e.g., 0.02 for 2%)")
         sys.exit(1)
+    
+    # Parse command line arguments
+    ticker = sys.argv[1].upper()
+    use_taylor = False
+    forecast_move = None
+    
+    for i in range(2, len(sys.argv)):
+        if sys.argv[i] == "--taylor":
+            use_taylor = True
+        elif sys.argv[i] == "--move" and i + 1 < len(sys.argv):
+            try:
+                forecast_move = float(sys.argv[i + 1])
+            except ValueError:
+                print(f"Error: Invalid move percentage: {sys.argv[i + 1]}")
+                sys.exit(1)
+    
     # Clear any previous cache
     clear_cache()
     
     # Analyze a stock with both strategies
-    ticker = sys.argv[1].upper()
-    
-    # print("Running UNDERVALUED strategy...")
+    print(f"Running UNDERVALUED strategy{' with Taylor series' if use_taylor else ''}...")
     results_undervalued = find_highest_roi_options(
         ticker=ticker,
         strategy="undervalued",
         min_dte=45,
         investment_amount=5000,
         min_volume=100,
-        min_oi=500
+        min_oi=500,
+        use_taylor_series=use_taylor,
+        forecast_move_percent=forecast_move
     )
     print_results(results_undervalued)
     
     print("\n" + "=" * 80 + "\n")
-    # print("Running CATALYST strategy...")
+    print(f"Running CATALYST strategy{' with Taylor series' if use_taylor else ''}...")
     results_catalyst = find_highest_roi_options(
         ticker=ticker,
         strategy="catalyst",
@@ -334,7 +378,8 @@ if __name__ == "__main__":
         investment_amount=5000,
         min_volume=100,
         min_oi=500,
-        target_price_multiplier=1.5
+        target_price_multiplier=1.5,
+        use_taylor_series=use_taylor
     )
     print_results(results_catalyst)
     
