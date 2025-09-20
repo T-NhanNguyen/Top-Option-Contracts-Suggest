@@ -17,6 +17,8 @@ _expiration_cache: Dict[str, List] = {}
 MAX_RETRIES = 3
 RETRY_DELAY = 1  # seconds
 
+MAX_BID_ASK_SPREAD = 0.3  # Maximum acceptable bid/ask spread as a percentage of last price
+
 @lru_cache(maxsize=100)
 def get_cached_stock_info(ticker: str) -> Optional[Dict]:
     """Cache stock info with retry logic"""
@@ -72,8 +74,8 @@ def get_cached_option_chain(ticker: str, expiration: str) -> Optional[Dict]:
                 
                 # Store only essential data to save memory
                 cached_data = {
-                    'calls': chain.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume']],
-                    'puts': chain.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume']]
+                    'calls': chain.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']],
+                    'puts': chain.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']]
                 }
                 
                 _option_chain_cache[cache_key] = cached_data
@@ -118,11 +120,22 @@ def process_single_expiration(ticker: str, expiration: str, min_dte: int, today:
     if not chain_data:
         return None
     
-    # Lazy processing - only compute what's needed
-    calls = chain_data['calls']
-    puts = chain_data['puts']
-    
-    # Stream processing - work with chunks if needed
+    calls = chain_data['calls'].copy()
+    puts = chain_data['puts'].copy()
+    for df in [calls, puts]:
+        if df.empty:
+            continue
+        # Ensure required columns exist with defaults
+        required_cols = ['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = 0.0 if col in ['impliedVolatility', 'lastPrice', 'bid', 'ask'] else 0
+        # Filter by bid/ask spread
+        df['bid_ask_spread'] = (df['ask'] - df['bid']) / df['lastPrice']
+        df = df[df['bid_ask_spread'] <= MAX_BID_ASK_SPREAD]
+    # Now filter safely
+    if calls.empty and puts.empty:
+        return None
     top_calls = calls.nlargest(5, 'openInterest') if not calls.empty else pd.DataFrame()
     top_puts = puts.nlargest(5, 'openInterest') if not puts.empty else pd.DataFrame()
     

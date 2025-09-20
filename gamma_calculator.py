@@ -3,7 +3,7 @@ from scipy.stats import norm
 from typing import Union, List, Dict
 
 class BlackScholesGammaCalculator:
-    """Simplified Black-Scholes Gamma calculator with vectorized operations."""
+    """Simplified Black-Scholes Gamma and Delta calculator with vectorized operations."""
 
     def __init__(self):
         # No caching by default, as NumPy operations are efficient
@@ -81,6 +81,27 @@ class BlackScholesGammaCalculator:
         gamma_values = self.calculate_gamma_vectorized(S, strikes_array, T, r, sigma)
         return dict(zip(strikes, gamma_values))
 
+    def calculate_delta(self, S: float, K: float, T: float, sigma: float, option_type: str) -> float:
+        """
+        Calculate Delta for a single option.
+        Parameters:
+        S (float): Current stock price
+        K (float): Strike price
+        T (float): Time to expiration (in years)
+        sigma (float): Implied volatility
+        option_type (str): 'call' or 'put'
+        Returns:
+        float: Delta value
+        """
+        self._validate_inputs(S, K, T, 0.05, sigma)  # Use default risk-free rate of 0.05
+        d1 = self._calculate_d1_vectorized(S, K, T, 0.05, sigma)
+        if option_type == 'call':
+            return norm.cdf(d1)
+        elif option_type == 'put':
+            return norm.cdf(d1) - 1
+        else:
+            raise ValueError("option_type must be 'call' or 'put'")
+        
 # Singleton instance for convenience
 gamma_calculator = BlackScholesGammaCalculator()
 
@@ -93,14 +114,22 @@ def calculate_gamma_bulk(S: float, strikes: List[float], T: float, r: float, sig
     """Backward-compatible function for bulk Gamma calculation."""
     return gamma_calculator.calculate_gamma_bulk(S, strikes, T, r, sigma)
 
+def calculate_delta(S: float, K: float, T: float, sigma: float, option_type: str) -> float:
+    """Backward-compatible function for single Delta calculation."""
+    return gamma_calculator.calculate_delta(S, K, T, sigma, option_type)
+
 # Example Usage
 if __name__ == "__main__":
-    # Example 1: Single Gamma calculation
+    # Example 1: Single Gamma and Delta calculation
     try:
         gamma_value = calculate_gamma(S=150.0, K=155.0, T=45/365, r=0.05, sigma=0.30)
+        call_delta = calculate_delta(S=150.0, K=155.0, T=45/365, sigma=0.30, option_type='call')
+        put_delta = calculate_delta(S=150.0, K=155.0, T=45/365, sigma=0.30, option_type='put')
         print(f"Single Gamma: {gamma_value:.6f}")
+        print(f"Call Delta: {call_delta:.6f}")
+        print(f"Put Delta: {put_delta:.6f}")
     except ValueError as e:
-        print(f"Error: {e}")
+        print(f"Error in single calculations: {e}")
 
     # Example 2: Vectorized Gamma calculation
     stock_price = 150.0
@@ -113,7 +142,7 @@ if __name__ == "__main__":
         for strike, gamma in zip(strikes, gamma_values):
             print(f"Strike: ${strike:.2f} | Gamma: {gamma:.6f}")
     except ValueError as e:
-        print(f"Error: {e}")
+        print(f"Error in vectorized gamma: {e}")
 
     # Example 3: Bulk Gamma calculation
     try:
@@ -124,4 +153,18 @@ if __name__ == "__main__":
         for strike, gamma in bulk_results.items():
             print(f"Strike: ${strike:.2f} | Gamma: {gamma:.6f}")
     except ValueError as e:
-        print(f"Error: {e}")
+        print(f"Error in bulk gamma: {e}")
+
+    # Example 4: Error handling for Delta
+    try:
+        invalid_delta = calculate_delta(S=150.0, K=155.0, T=0.0, sigma=0.30, option_type='call')
+        print("Error: Should not reach here")
+    except ValueError as e:
+        print(f"\nError handling test (Delta with T=0): {e}")
+
+    # Example 5: Delta with invalid option type
+    try:
+        invalid_delta = calculate_delta(S=150.0, K=155.0, T=45/365, sigma=0.30, option_type='invalid')
+        print("Error: Should not reach here")
+    except ValueError as e:
+        print(f"Error handling test (Invalid option type): {e}")

@@ -1,7 +1,7 @@
 import pandas as pd
 from datetime import datetime
 from option_chain import get_option_chain_analysis_optimized, clear_cache, get_cache_stats
-from gamma_calculator import gamma_calculator, calculate_gamma
+from gamma_calculator import gamma_calculator, calculate_gamma, calculate_delta
 from option_roi import OptionROIAnalyzer
 import numpy as np
 import sys
@@ -177,7 +177,7 @@ def find_highest_roi_options(
                 continue
 
             # Calculate delta
-            delta = analyzer.calculate_delta(
+            delta = calculate_delta(
                 S=current_price,
                 K=option['strike'],
                 T=option['dte']/365,
