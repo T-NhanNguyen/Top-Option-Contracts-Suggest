@@ -41,7 +41,10 @@ def find_highest_roi_options(
     
     print(f"Analyzing {ticker} for {strategy} strategy with DTE >= {min_dte}...")
     if strategy == "catalyst":
-        print(f"DTE range: {min_dte}-{max_dte}, Target price multiplier: {target_price_multiplier}")
+        if forecast_move_percent is not None:
+            print(f"DTE range: {min_dte}-{max_dte}, Target price movement: {forecast_move_percent}")
+        else:
+            print(f"DTE range: {min_dte}-{max_dte}, Target price multiplier: {target_price_multiplier}")
     if use_taylor_series:
         print(f"Using Taylor series ROI calculation with {'default' if forecast_move_percent is None else f'{forecast_move_percent:.1%}'} move")
     print("=" * 60)
@@ -54,7 +57,13 @@ def find_highest_roi_options(
         return analysis
     
     current_price = analysis['current_price']
-    target_price = current_price * target_price_multiplier if strategy == "catalyst" else None
+    target_price = None
+    if forecast_move_percent is not None:
+        # Use forecast_move_percent if provided
+        target_price = current_price + (current_price * forecast_move_percent)
+    else:
+        # Fall back to target_price_multiplier if forecast_move_percent is None
+        target_price = current_price * target_price_multiplier
     print(f"Current price: ${current_price:.2f}" + 
           (f" | Target price: ${target_price:.2f}" if strategy == "catalyst" else ""))
     print(f"Found {analysis['qualified_expirations_count']} qualified expirations")
@@ -64,10 +73,11 @@ def find_highest_roi_options(
     # Extract strikes based on strategy
     all_strikes = []
     strike_details = {}
-    
+    today = datetime.now()
     for expiry, data in analysis['expiration_data'].items():
         expiry_date = datetime.strptime(expiry, '%Y-%m-%d')
-        dte = (expiry_date - datetime.now()).days
+        dte = (expiry_date - today).days
+        # print(f"  {expiry}: DTE = {dte}")
         
         # For catalyst strategy, skip expirations beyond max_dte
         if strategy == "catalyst" and dte > max_dte:
@@ -105,14 +115,24 @@ def find_highest_roi_options(
     if not unique_strikes:
         return {"error": f"No {'OTM call' if strategy == 'catalyst' else 'valid'} options found meeting criteria"}
 
-    # Calculate gamma for all strikes
-    gamma_values = gamma_calculator.calculate_gamma_vectorized(
-        S=current_price,
-        strikes=np.array(unique_strikes),
-        T=min_dte/365,
-        r=0.05,
-        sigma=analysis.get('average_implied_volatility', 0.3)
-    )
+    # Calculate gamma for all strikes with actual DTE for each option
+    gamma_values = []
+    for strike in unique_strikes:
+        if strike in strike_details:
+            details = strike_details[strike]
+            dte_years = details['dte'] / 365.0
+            iv_decimal = details['iv']  # Assuming this is already in decimal form
+            
+            gamma = calculate_gamma(
+                S=current_price,
+                K=strike,
+                T=dte_years,
+                r=0.05,
+                sigma=iv_decimal
+            )
+            gamma_values.append(gamma)
+        else:
+            gamma_values.append(0)  # Default value if strike not found
 
     # Create strike analysis DataFrame
     strike_analysis = []
@@ -378,7 +398,8 @@ if __name__ == "__main__":
         investment_amount=5000,
         min_volume=100,
         min_oi=500,
-        target_price_multiplier=1.5,
+        # target_price_multiplier=1.25,
+        forecast_move_percent=forecast_move,
         use_taylor_series=use_taylor
     )
     print_results(results_catalyst)

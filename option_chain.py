@@ -109,8 +109,8 @@ def process_expiration_batch(ticker: str, expirations: List[str], min_dte: int, 
 def process_single_expiration(ticker: str, expiration: str, min_dte: int, today: datetime) -> Optional[Dict]:
     """Process a single expiration with lazy evaluation"""
     # Precompute DTE once
-    expiry_date = datetime.strptime(expiration, '%Y-%m-%d').date()
-    dte = (expiry_date - today.date()).days
+    expiry_date = datetime.strptime(expiration, '%Y-%m-%d')
+    dte = (expiry_date - today).days  # Use datetime objects, not dates
     
     if dte < min_dte:
         return None
