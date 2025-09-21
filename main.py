@@ -3,8 +3,11 @@ from datetime import datetime
 from option_chain import get_option_chain_analysis_optimized, clear_cache, get_cache_stats
 from gamma_calculator import gamma_calculator, calculate_gamma, calculate_delta
 from option_roi import OptionROIAnalyzer
+import ascii_art_print
 import numpy as np
 import sys
+
+
 
 def find_highest_roi_options(
     ticker: str,
@@ -39,15 +42,16 @@ def find_highest_roi_options(
     if strategy not in ["undervalued", "catalyst"]:
         return {"error": "Invalid strategy. Choose 'undervalued' or 'catalyst'"}
     
-    print(f"Analyzing {ticker} for {strategy} strategy with DTE >= {min_dte}...")
-    if strategy == "catalyst":
-        if forecast_move_percent is not None:
-            print(f"DTE range: {min_dte}-{max_dte}, Target price movement: {forecast_move_percent}")
-        else:
-            print(f"DTE range: {min_dte}-{max_dte}, Target price multiplier: {target_price_multiplier}")
-    if use_taylor_series:
-        print(f"Using Taylor series ROI calculation with {'default' if forecast_move_percent is None else f'{forecast_move_percent:.1%}'} move")
-    print("=" * 60)
+    # Print helper functions take cares of this
+    # print(f"Analyzing {ticker} for {strategy} strategy with DTE >= {min_dte}...")
+    # if strategy == "catalyst":
+    #     if forecast_move_percent is not None:
+    #         print(f"DTE range: {min_dte}-{max_dte}, Target price movement: {forecast_move_percent}")
+    #     else:
+    #         print(f"DTE range: {min_dte}-{max_dte}, Target price multiplier: {target_price_multiplier}")
+    # if use_taylor_series:
+    #     print(f"Using Taylor series ROI calculation with {'default' if forecast_move_percent is None else f'{forecast_move_percent:.1%}'} move")
+    # print("-" * 60)
     
     # Get option chain analysis
     analysis = get_option_chain_analysis_optimized(ticker, min_dte)
@@ -64,11 +68,13 @@ def find_highest_roi_options(
     else:
         # Fall back to target_price_multiplier if forecast_move_percent is None
         target_price = current_price * target_price_multiplier
-    print(f"Current price: ${current_price:.2f}" + 
-          (f" | Target price: ${target_price:.2f}" if strategy == "catalyst" else ""))
-    print(f"Found {analysis['qualified_expirations_count']} qualified expirations")
-    print(f"Total OI: {analysis['total_open_interest']:,}")
-    print(f"Total Volume: {analysis['total_volume']:,}")
+    
+    # print helper function takes care of this
+    # print(f"Current price: ${current_price:.2f}" + 
+    #       (f" | Target price: ${target_price:.2f}" if strategy == "catalyst" else ""))
+    # print(f"Found {analysis['qualified_expirations_count']} qualified expirations")
+    # print(f"Total OI: {analysis['total_open_interest']:,}")
+    # print(f"Total Volume: {analysis['total_volume']:,}")
     
     # Extract strikes based on strategy
     all_strikes = []
@@ -123,6 +129,14 @@ def find_highest_roi_options(
             dte_years = details['dte'] / 365.0
             iv_decimal = details['iv']  # Assuming this is already in decimal form
             
+            # Add validation checks before gamma calculation
+            if (current_price <= 0 or 
+                dte_years <= 0 or 
+                iv_decimal <= 0 or 
+                pd.isna(iv_decimal)):
+                # print(f"Skipping option {option['strike']}: invalid inputs - S: {current_price}, T: {dte_years}, sigma: {iv_decimal}")
+                continue
+
             gamma = calculate_gamma(
                 S=current_price,
                 K=strike,
@@ -229,8 +243,8 @@ def find_highest_roi_options(
             roi_percentage = (potential_profit / investment_amount) * 100
             
             # Skip negative ROIs for all results
-            if roi_percentage <= 0:
-                continue
+            # if roi_percentage <= 0:
+            #     continue
                 
             roi_results.append({
                 'strike': option['strike'],
@@ -296,71 +310,271 @@ def find_highest_roi_options(
         'all_opportunities': roi_df.to_dict('records')
     }
 
-def print_results(results):
-    """Print formatted results with Taylor series indicators"""
-    if "error" in results:
-        print(f"Error: {results['error']}")
+def analyze_cross_strategy_opportunities(undervalued_results, catalyst_results):
+    """
+    Identify and analyze contracts that appear in both undervalued and catalyst strategies
+    Provides insights on pricing efficiency and catalyst potential
+    """
+    if "error" in undervalued_results or "error" in catalyst_results:
+        return {"error": "Cannot compare - one or both strategies failed"}
+    
+    # Create dictionaries for quick lookup
+    undervalued_map = {}
+    for opp in undervalued_results.get('all_opportunities', []):
+        key = f"{opp['type']}_{opp['strike']}_{opp['expiration']}"
+        undervalued_map[key] = opp
+    
+    catalyst_map = {}
+    for opp in catalyst_results.get('all_opportunities', []):
+        key = f"{opp['type']}_{opp['strike']}_{opp['expiration']}"
+        catalyst_map[key] = opp
+    
+    # Find common contracts
+    common_contracts = []
+    for key in set(undervalued_map.keys()) & set(catalyst_map.keys()):
+        undervalued_data = undervalued_map[key]
+        catalyst_data = catalyst_map[key]
+        
+        common_contracts.append({
+            'contract_key': key,
+            'strike': undervalued_data['strike'],
+            'type': undervalued_data['type'],
+            'expiration': undervalued_data['expiration'],
+            'dte': undervalued_data['dte'],
+            'market_price': undervalued_data['market_price'],
+            'undervalued_roi': undervalued_data['roi_percentage'],
+            'catalyst_roi': catalyst_data['roi_percentage'],
+            'iv': undervalued_data['iv'],
+            'gamma': undervalued_data['gamma'],
+            'delta': undervalued_data['delta'],
+            'price_discrepancy': undervalued_data.get('price_discrepancy', 0),
+            'efficiency_ratio': abs(catalyst_data['roi_percentage'] / max(0.01, undervalued_data['roi_percentage']))
+        })
+    
+    # Sort by most interesting opportunities (high catalyst ROI with reasonable undervalued ROI)
+    common_contracts.sort(key=lambda x: (
+        -x['catalyst_roi'],  # Highest catalyst ROI first
+        x['efficiency_ratio']  # Then by efficiency ratio
+    ))
+    
+    return {
+        'common_contracts': common_contracts,
+        'total_common': len(common_contracts),
+        'insights': generate_strategy_insights(common_contracts)
+    }
+
+def generate_strategy_insights(common_contracts):
+    """Generate actionable insights from cross-strategy analysis"""
+    insights = []
+    
+    for contract in common_contracts[:5]:  # Top 5 most interesting
+        uv_roi = contract['undervalued_roi']
+        cat_roi = contract['catalyst_roi']
+        efficiency = contract['efficiency_ratio']
+        
+        if abs(uv_roi) < 5 and cat_roi > 50:
+            insight = (
+                f"${contract['strike']} {contract['type']} ({contract['dte']} DTE): "
+                f"Efficiently priced ({uv_roi:.1f}% ROI) with explosive catalyst potential ({cat_roi:.1f}% ROI). "
+                f"Great risk/reward if catalyst thesis plays out."
+            )
+        elif uv_roi < -10 and cat_roi > 100:
+            insight = (
+                f"${contract['strike']} {contract['type']}: "
+                f"Overpriced ({uv_roi:.1f}% ROI) but massive catalyst upside ({cat_roi:.1f}% ROI). "
+                f"Consider selling instead of buying, or use spreads."
+            )
+        elif uv_roi > 10 and cat_roi > 75:
+            insight = (
+                f"${contract['strike']} {contract['type']}: "
+                f"Undervalued ({uv_roi:.1f}% ROI) with strong catalyst potential ({cat_roi:.1f}% ROI). "
+                f"Excellent opportunity - both strategies align."
+            )
+        else:
+            insight = (
+                f"${contract['strike']} {contract['type']}: "
+                f"UV ROI: {uv_roi:.1f}%, Catalyst ROI: {cat_roi:.1f}%. "
+                f"Efficiency Ratio: {efficiency:.1f}x"
+            )
+        
+        insights.append(insight)
+    
+    return insights
+
+def print_results(undervalued_results, catalyst_results, detailed=False):
+    """Print formatted results for both strategies with the new design"""
+    # Header and ROI comparison
+    
+    # Get analysis date from either result
+    analysis_date = undervalued_results.get('analysis_date', datetime.now().strftime('%Y-%m-%d'))
+    if "error" in undervalued_results and "error" in catalyst_results:
+        print("Error: Both strategies failed")
         return
     
-    print(f"\nSearch Date: {results['analysis_date']}")
-    print(f"Current Price: ${results['current_price']:.2f}" + 
-          (f" | Target: ${results['target_price']:.2f}" if results['strategy'] == 'catalyst' else ""))
-    print(f"Buying Power: ${results['investment_amount']:,.0f}")
-    print(f"DTE: {results['min_dte']}" + 
-          (f"-{results['max_dte']}" if results['strategy'] == 'catalyst' else "+") + " days")
-    if results.get('use_taylor_series', False):
-        move_info = f"{results.get('forecast_move_percent', 'default'):.1%}" if results.get('forecast_move_percent') is not None else "default"
-        print(f"Method: Taylor Series ROI ({move_info} move)")
-    else:
-        print("Method: Traditional Black-Scholes")
+    # Get current price from whichever result is available
+    current_price = None
+    if "error" not in undervalued_results:
+        current_price = undervalued_results['current_price']
+    elif "error" not in catalyst_results:
+        current_price = catalyst_results['current_price']
+    
+    investment_amount = 5000  # Default or get from results
+    
+    print(f"{analysis_date} | Price: ${current_price:.2f} | Buying Power: ${investment_amount:,.0f}")
+    
+    strategy_info = []
+    if "error" not in undervalued_results:
+        move_percent = undervalued_results.get('forecast_move_percent', 0.5)
+        strategy_info.append(f"Undervalued (DTE ≥ {undervalued_results['min_dte']}, {move_percent:.0%} Move)")
+    
+    if "error" not in catalyst_results:
+        target_info = f"Target ${catalyst_results['target_price']:.2f}" if catalyst_results.get('target_price') else "No Target"
+        max_dte = catalyst_results.get('max_dte', 90)
+        strategy_info.append(f"Catalyst (DTE {catalyst_results['min_dte']}-{max_dte}, {target_info})")
+    
+    print(" | ".join(strategy_info))
     print()
     
-    # Top ROI picks
-    print("**Top ROI Picks**")
-    top_picks = results.get('best_roi_opportunities', [])[:5]
-    if not top_picks:
-        print("    No worthy picks found")
-    else:
-        for opp in top_picks:
-            print(f"  {opp['type'].title()} ${opp['strike']:.1f} | Exp: {opp['expiration']} | DTE: {opp['dte']}")
-            print(f"    ROI: {opp['roi_percentage']:.1f}% | IV: {opp['iv']:.2%}")
-            print(f"    Market: ${opp['market_price']:.2f} | " + 
-                  (f"Target: ${opp.get('calc_price', 0):.2f}" if results.get('strategy') == 'catalyst' else 
-                   f"Theoretical: ${opp.get('calc_price', 0):.2f}"))
-            print(f"    Gamma: {opp.get('gamma', 0):.6f} | Delta: {opp.get('delta', 0):.6f}")
-            print(f"    OI: {opp.get('oi', 0):,} | Vol: {opp.get('volume', 0):,}")
-            print()
+    # ROI Comparison chart - combine opportunities from both strategies
+    print("ROI% Comparison (Undervalued vs. Catalyst)")
+    print()
     
-    # Secondary picks
-    secondary_label = "Conservative Picks" if results.get('strategy') == "undervalued" else "High-Gamma Picks"
-    secondary_key = 'best_low_risk' if results.get('strategy') == "undervalued" else 'high_gamma_opportunities'
-    print(f"**{secondary_label}**")
-    secondary_picks = results.get(secondary_key, [])[:5]
-    if not secondary_picks:
-        print("    No worthy picks found")
+    # Get top opportunities from both strategies
+    uv_opportunities = undervalued_results.get('best_roi_opportunities', []) if "error" not in undervalued_results else []
+    cat_opportunities = catalyst_results.get('best_roi_opportunities', []) if "error" not in catalyst_results else []
+    
+    # Combine and sort by ROI
+    all_opportunities = []
+    for opp in uv_opportunities:
+        opp['strategy'] = 'undervalued'
+        all_opportunities.append(opp)
+    
+    for opp in cat_opportunities:
+        opp['strategy'] = 'catalyst'
+        all_opportunities.append(opp)
+    
+    # Sort by ROI descending and take top 5
+    all_opportunities.sort(key=lambda x: x['roi_percentage'], reverse=True)
+    top_opportunities = all_opportunities[:5]
+    
+    # Determine scale and range
+    if top_opportunities:
+        max_roi = max(opp['roi_percentage'] for opp in top_opportunities)
+        min_roi = min(opp['roi_percentage'] for opp in top_opportunities)
+        roi_range = max(max_roi, abs(min_roi))
+        scale_unit = max(20, roi_range / 20)  # At least 20% per block, or scale dynamically
     else:
-        for opp in secondary_picks:
-            print(f"  {opp['type'].title()} ${opp['strike']:.1f} | Exp: {opp['expiration']} | DTE: {opp['dte']}")
-            print(f"    ROI: {opp['roi_percentage']:.1f}% | IV: {opp['iv']:.2%}")
-            print(f"    Market: ${opp['market_price']:.2f} | " + 
-                  (f"Target: ${opp.get('calc_price', 0):.2f}" if results.get('strategy') == 'catalyst' else 
-                   f"Theoretical: ${opp.get('calc_price', 0):.2f}"))
-            print(f"    Gamma: {opp.get('gamma', 0):.6f} | Delta: {opp.get('delta', 0):.6f}")
-            print(f"    OI: {opp.get('oi', 0):,} | Vol: {opp.get('volume', 0):,}")
-            print()
+        scale_unit = 20
+        roi_range = 100
+    
+    for opp in top_opportunities:
+        roi = opp['roi_percentage']
+        bar_length = max(1, int(abs(roi) / scale_unit))
+        bar = "█" * bar_length if roi > 0 else "░" * bar_length
+        
+        option_type = "Call" if opp['type'] == 'call' else "Put"
+        strategy_label = "Underval" if opp['strategy'] == 'undervalued' else "Catalyst"
+        
+        print(f"{option_type} {opp['strike']:.1f}\t({strategy_label})\t|{bar} {roi:.1f}%")
+    
+    print()
+    print(f"Scale: █ = ~{scale_unit:.0f}% ROI | Range: {-roi_range:.0f}% to {roi_range:.0f}%")
+    print("—" * 60)  
+        
+    # Combine all opportunities from both strategies
+    uv_all = undervalued_results.get('all_opportunities', []) if "error" not in undervalued_results else []
+    cat_all = catalyst_results.get('all_opportunities', []) if "error" not in catalyst_results else []
+    
+    all_combined = uv_all + cat_all
+    
+    if all_combined:
+        # Sort by ROI descending
+        all_combined.sort(key=lambda x: x['roi_percentage'], reverse=True)
+        
+        if detailed:
+            print("Type Strike Exp      \tDTE ROI% \tIV%  \tPrice\t\tOI/Vol\t\tGamma        Delta")
+            print("---- ------ -------  \t--- ---- \t---- \t--------\t--------\t-----        -----")
+        else:
+            print("Type Strike Exp      \tDTE ROI% \tIV%  \tPrice\t\tOI/Vol")
+            print("---- ------ -------  \t--- ---- \t---- \t--------\t--------")
 
+            
+        for opp in all_combined[:10]:  # Show top 10
+                option_type = "Call" if opp['type'] == 'call' else "Put"
+                exp_date = opp['expiration'].split('-')
+                exp_formatted = f"{exp_date[1]}-{exp_date[2]}-{exp_date[0][2:]}"
+                price_info = f"{opp['market_price']:.2f}/{opp.get('calc_price', 0):.2f}"
+                oi_vol = f"{int(opp['oi']):,}/{int(opp['volume']):,}"
+                
+                if detailed:
+                    gamma = f"{opp.get('gamma', 0):.4f}" if 'gamma' in opp else "N/A"
+                    delta = f"{opp.get('delta', 0):.4f}" if 'delta' in opp else "N/A"
+                    print(f"{option_type:4} {opp['strike']:6.1f} {exp_formatted:9} \t{opp['dte']:3} {opp['roi_percentage']:5.1f}% \t{opp['iv']:4.1%} \t{price_info:9} \t{oi_vol:9} \t{gamma:7}        {delta:7}")
+                else:
+                    print(f"{option_type:4} {opp['strike']:6.1f} {exp_formatted:9} \t{opp['dte']:3} {opp['roi_percentage']:5.1f}% \t{opp['iv']:4.1%} \t{price_info:9} \t{oi_vol:9}")    
+    else:
+        print("No opportunities found")
+    
+    print("—" * 60)
+
+
+def print_cross_strategy_analysis(analysis, detailed=False):
+    """Print the cross-strategy analysis results with the new design"""
+    if "error" in analysis:
+        print(f"Cross-strategy analysis error: {analysis['error']}")
+        return
+    
+    # Cross-strategy analysis
+    print("CROSS-STRATEGY ANALYSIS: Contracts in Both Undervalued & Catalyst")
+    print()
+    
+    common_contracts = analysis.get('common_contracts', [])
+    total_common = analysis.get('total_common', 0)
+    ascii_art_print.print_wizard()
+    print(f"Found {total_common} contract{'s' if total_common != 1 else ''} appearing in both strategies!")
+    print()
+    
+    
+    print("Most Interesting Opportunities")
+    insights = analysis.get('insights', [])
+    if insights:
+        for i, insight in enumerate(insights, 1):
+            print(f"{i}. {insight}")
+    else:
+        print("No common opportunities found")
+    print()
+    
+    if detailed and common_contracts:
+        print("Detailed Comparison")
+        print("Contract\t\t| UV ROI\t| Catalyst ROI\t| Efficiency\t| IV\t| Gamma")
+        print("-" * 80)
+        
+        for contract in common_contracts[:10]:
+            option_type = "call" if contract['type'] == 'call' else "put"
+            exp_date = contract['expiration'].split('-')
+            exp_formatted = f"{exp_date[1]}-{exp_date[2]}-{exp_date[0][2:]}"
+            
+            print(f"{option_type} ${contract['strike']:5.1f} {exp_formatted}\t| "
+                  f"{contract['undervalued_roi']:6.1f}%\t| "
+                  f"{contract['catalyst_roi']:11.1f}%\t| "
+                  f"{contract['efficiency_ratio']:9.1f}x\t| "
+                  f"{contract['iv']:4.1%}\t| "
+                  f"{contract['gamma']:6.4f}")
+    
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python3 main.py [ticker] [--taylor] [--move PERCENT]")
+        print("Usage: python3 main.py [ticker] [--taylor] [--move PERCENT] [--detailed]")
         print("Options:")
         print("  --taylor     Use Taylor series ROI calculation (default: False)")
         print("  --move X     Expected move percentage for Taylor series (e.g., 0.02 for 2%)")
+        print("  --detailed   Show detailed tables")
         sys.exit(1)
     
     # Parse command line arguments
     ticker = sys.argv[1].upper()
     use_taylor = False
     forecast_move = None
+    detailed = False
     
     for i in range(2, len(sys.argv)):
         if sys.argv[i] == "--taylor":
@@ -371,12 +585,15 @@ if __name__ == "__main__":
             except ValueError:
                 print(f"Error: Invalid move percentage: {sys.argv[i + 1]}")
                 sys.exit(1)
+        elif sys.argv[i] == "--detailed":
+            detailed = True
     
     # Clear any previous cache
     clear_cache()
     
     # Analyze a stock with both strategies
-    print(f"Running UNDERVALUED strategy{' with Taylor series' if use_taylor else ''}...")
+    ascii_art_print.print_wizard_message(f"Running analysis for {ticker}...")
+    
     results_undervalued = find_highest_roi_options(
         ticker=ticker,
         strategy="undervalued",
@@ -387,22 +604,26 @@ if __name__ == "__main__":
         use_taylor_series=use_taylor,
         forecast_move_percent=forecast_move
     )
-    print_results(results_undervalued)
     
-    print("\n" + "=" * 80 + "\n")
-    print(f"Running CATALYST strategy{' with Taylor series' if use_taylor else ''}...")
     results_catalyst = find_highest_roi_options(
         ticker=ticker,
         strategy="catalyst",
         min_dte=30,
+        max_dte=90,
         investment_amount=5000,
         min_volume=100,
         min_oi=500,
-        # target_price_multiplier=1.25,
-        forecast_move_percent=forecast_move,
-        use_taylor_series=use_taylor
+        target_price_multiplier=1.5,  # 50% move for catalyst
+        use_taylor_series=use_taylor,
+        forecast_move_percent=forecast_move
     )
-    print_results(results_catalyst)
+
+    # Print combined results
+    print_results(results_undervalued, results_catalyst, detailed)
+
+    # print("\n" + "=" * 80 + "\n")
+    cross_analysis = analyze_cross_strategy_opportunities(results_undervalued, results_catalyst)
+    print_cross_strategy_analysis(cross_analysis, detailed)
     
     # Show cache statistics
     print("\nCache Statistics:")
