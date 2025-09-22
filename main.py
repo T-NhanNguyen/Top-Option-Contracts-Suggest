@@ -5,7 +5,8 @@ from gamma_calculator import gamma_calculator, calculate_gamma, calculate_delta
 from option_roi import OptionROIAnalyzer
 import ascii_art_print
 import numpy as np
-import sys
+
+import argparse
 
 
 
@@ -562,31 +563,22 @@ def print_cross_strategy_analysis(analysis, detailed=False):
                   f"{contract['gamma']:6.4f}")
     
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python3 main.py [ticker] [--taylor] [--move PERCENT] [--detailed]")
-        print("Options:")
-        print("  --taylor     Use Taylor series ROI calculation (default: False)")
-        print("  --move X     Expected move percentage for Taylor series (e.g., 0.02 for 2%)")
-        print("  --detailed   Show detailed tables")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Options Analysis Tool')
+    parser.add_argument('ticker', help='Stock ticker symbol')
+    parser.add_argument('--taylor', action='store_true', help='Use Taylor series ROI calculation')
+    parser.add_argument('--move', type=float, help='Expected move percentage (e.g., 0.02 for 2%)')
+    parser.add_argument('--detailed', action='store_true', help='Show detailed tables')
+    parser.add_argument('--strategy', choices=['undervalued', 'catalyst'], default='undervalued', 
+                       help='Analysis strategy')
+    parser.add_argument('--min-dte', type=int, default=30, help='Minimum days to expiration')
+    parser.add_argument('--investment', type=float, default=10000, help='Investment amount')
     
-    # Parse command line arguments
-    ticker = sys.argv[1].upper()
-    use_taylor = False
-    forecast_move = None
-    detailed = False
+    args = parser.parse_args()
     
-    for i in range(2, len(sys.argv)):
-        if sys.argv[i] == "--taylor":
-            use_taylor = True
-        elif sys.argv[i] == "--move" and i + 1 < len(sys.argv):
-            try:
-                forecast_move = float(sys.argv[i + 1])
-            except ValueError:
-                print(f"Error: Invalid move percentage: {sys.argv[i + 1]}")
-                sys.exit(1)
-        elif sys.argv[i] == "--detailed":
-            detailed = True
+    ticker = args.ticker.upper()
+    use_taylor = args.taylor
+    forecast_move = args.move
+    detailed = args.detailed
     
     # Clear any previous cache
     clear_cache()

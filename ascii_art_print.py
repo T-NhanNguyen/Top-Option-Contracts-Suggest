@@ -36,16 +36,16 @@ def print_wizard_message(message=""):
          /^\     .
     /\   "V"
    /__\   I      O  o
-  //..\\\\  I     .
+  //..\\  I     .
   \].`[/  I
   /l\/j\  (]    .  O
  /. ~~ ,\/I          .
- \\\\L__j^\/I       o
+ \\L__j^\/I       o
   \/--v]  I     o   .
   |    |  I   _________
   |    |  I c(`       ')o
   |    l  I   \.     ,/
-_/j  L l\_!  _//^---^\\\\_    {message}
+_/j  L l\_!  _//^---^\\_    {message}
     ''')
 def print_wizard(message=""):
     print(r'''
