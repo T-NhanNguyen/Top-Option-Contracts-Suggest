@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.stats import norm
 from typing import Dict, List
 from gamma_calculator import calculate_gamma, calculate_delta
+from risk_free_rate import get_risk_free_rate  # Add this import
 
 GAMMA_LOW_THRESHOLD = 0.02
 GAMMA_HIGH_THRESHOLD = 0.05
@@ -10,8 +11,12 @@ DEBUG_MODE = False
 
 class OptionROIAnalyzer:
     def __init__(self):
-        self.risk_free_rate = 0.05
+        # No fixed risk-free rate needed anymore
         self.percentile_threshold = 0.8  # Top 20% for percentile-based filtering
+
+    def get_risk_free_rate(self, dte_days: int) -> float:
+        """Get dynamic risk-free rate based on DTE."""
+        return get_risk_free_rate(dte_days)
 
     def screen_by_time_adjusted_gamma(self, options_df: pd.DataFrame, strategy: str, use_percentile: bool = False) -> pd.DataFrame:
         """Screen options based on Time-Adjusted Gamma or percentile-based filtering."""
@@ -79,8 +84,12 @@ class OptionROIAnalyzer:
         
         return result_df.nlargest(10, 'taylor_roi')
 
-    def calculate_black_scholes(self, S: float, K: float, T: float, r: float, sigma: float, option_type: str) -> float:
-        """Calculate Black-Scholes option price."""
+    def calculate_black_scholes(self, S: float, K: float, T: float, sigma: float, option_type: str, dte_days: int = None) -> float:
+        """Calculate Black-Scholes option price with dynamic risk-free rate."""
+        if dte_days is None:
+            dte_days = int(T * 365)  # Convert years to days if not provided
+        
+        r = self.get_risk_free_rate(dte_days)
         d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
         if option_type == 'call':
@@ -95,12 +104,17 @@ class OptionROIAnalyzer:
         if options_df.empty:
             return {"error": "No options data provided"}
 
-        # Calculate Greeks
+        # Calculate Greeks with dynamic risk-free rates
         options_df['gamma'] = options_df.apply(
-            lambda x: calculate_gamma(current_price, x['strike'], x['dte'] / 365, self.risk_free_rate, x['iv']), axis=1)
+            lambda x: calculate_gamma(
+                current_price, x['strike'], x['dte'] / 365, x['iv'], x['dte']
+            ), axis=1)
+        
         options_df['delta'] = options_df.apply(
-            lambda x: calculate_delta(current_price, x['strike'], x['dte'] / 365, x['iv'], x['type']), axis=1)
-
+            lambda x: calculate_delta(
+                current_price, x['strike'], x['dte'] / 365, x['iv'], x['type'], x['dte']
+            ), axis=1)
+        
         # Screen by Time-Adjusted Gamma (try both methods, prefer threshold for undervalued, percentile for catalyst)
         use_percentile = strategy == "catalyst"
         

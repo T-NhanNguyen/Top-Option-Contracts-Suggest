@@ -142,8 +142,8 @@ def find_highest_roi_options(
                 S=current_price,
                 K=strike,
                 T=dte_years,
-                r=0.05,
-                sigma=iv_decimal
+                sigma=iv_decimal,
+                dte_days=details['dte']
             )
             gamma_values.append(gamma)
         else:
@@ -212,7 +212,8 @@ def find_highest_roi_options(
                 K=option['strike'],
                 T=dte_years,
                 sigma=option['iv'],
-                option_type=option['type']
+                option_type=option['type'],
+                dte_days=option['dte']
             )
 
             # Calculate option price based on strategy
@@ -221,18 +222,18 @@ def find_highest_roi_options(
                     S=current_price,
                     K=option['strike'],
                     T=dte_years,
-                    r=analyzer.risk_free_rate,
                     sigma=option['iv'],
-                    option_type=option['type']
+                    option_type=option['type'],
+                    dte_days=option['dte']
                 )
             else:  # catalyst
                 calc_price = analyzer.calculate_black_scholes(
                     S=target_price,
                     K=option['strike'],
                     T=dte_years,
-                    r=analyzer.risk_free_rate,
                     sigma=option['iv'],
-                    option_type='call'
+                    option_type='call',
+                    dte_days=option['dte']
                 )
             
             # ROI calculation
