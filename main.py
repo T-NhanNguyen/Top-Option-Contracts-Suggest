@@ -1,5 +1,5 @@
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from option_chain import get_option_chain_analysis_optimized, clear_cache, get_cache_stats
 from gamma_calculator import gamma_calculator, calculate_gamma, calculate_delta
 from option_roi import OptionROIAnalyzer
@@ -403,6 +403,243 @@ def generate_strategy_insights(common_contracts):
     
     return insights
 
+def parse_date_range(date_range_str: str) -> tuple:
+    """
+    Parse a simple date range format like '11/25-1/26' or '11/25-11/30'
+    Returns (start_date, end_date) as datetime objects
+
+    Format: MM/DD-MM/DD
+    Assumes current year for start date, and handles year rollover
+    """
+    try:
+        parts = date_range_str.split('-')
+        if len(parts) != 2:
+            raise ValueError("Date range must be in format MM/DD-MM/DD")
+
+        start_str, end_str = parts
+
+        # Parse month/day
+        start_month, start_day = map(int, start_str.split('/'))
+        end_month, end_day = map(int, end_str.split('/'))
+
+        # Get current year
+        current_year = datetime.now().year
+
+        # Create start date with current year
+        start_date = datetime(current_year, start_month, start_day)
+
+        # If start date is in the past, use next year
+        if start_date < datetime.now():
+            start_date = datetime(current_year + 1, start_month, start_day)
+
+        # Create end date
+        # If end month is less than start month, assume next year
+        if end_month < start_month:
+            end_date = datetime(start_date.year + 1, end_month, end_day)
+        else:
+            end_date = datetime(start_date.year, end_month, end_day)
+
+        return start_date, end_date
+
+    except Exception as e:
+        raise ValueError(f"Error parsing date range '{date_range_str}': {str(e)}")
+
+def get_filtered_options_by_date(
+    ticker: str,
+    date_range: str,
+    min_volume: int = 100,
+    min_oi: int = 500,
+    option_type: str = "calls",  # "calls", "puts", or "both"
+    include_greeks: bool = False
+) -> dict:
+    """
+    Get option contracts within a specified date range, filtered by OI and volume.
+
+    Parameters:
+    ticker (str): Stock ticker symbol
+    date_range (str): Date range in format 'MM/DD-MM/DD' (e.g., '11/25-1/26')
+    min_volume (int): Minimum volume filter (default: 100)
+    min_oi (int): Minimum open interest filter (default: 500)
+    option_type (str): "calls", "puts", or "both" (default: "calls")
+    include_greeks (bool): Whether to calculate and include Greeks (delta, gamma)
+
+    Returns:
+    dict: Contains filtered options and metadata
+    """
+    try:
+        # Parse the date range
+        start_date, end_date = parse_date_range(date_range)
+
+        # Get option chain analysis (min_dte=0 to get all available options)
+        analysis = get_option_chain_analysis_optimized(ticker, min_dte=0)
+
+        if "error" in analysis:
+            return {"error": analysis["error"]}
+
+        current_price = analysis['current_price']
+        today = datetime.now()
+
+        # Collect options within the date range
+        filtered_options = []
+
+        for expiry, data in analysis['expiration_data'].items():
+            expiry_date = datetime.strptime(expiry, '%Y-%m-%d')
+
+            # Filter by date range
+            if not (start_date <= expiry_date <= end_date):
+                continue
+
+            dte = (expiry_date - today).days
+
+            # Determine which option types to process
+            types_to_process = []
+            if option_type in ["calls", "both"]:
+                types_to_process.append(('calls', 'call'))
+            if option_type in ["puts", "both"]:
+                types_to_process.append(('puts', 'put'))
+
+            for opt_type_key, opt_type_label in types_to_process:
+                for option in data[opt_type_key]:
+                    # Apply volume and OI filters
+                    if option.get('volume', 0) < min_volume:
+                        continue
+                    if option.get('openInterest', 0) < min_oi:
+                        continue
+
+                    strike = option['strike']
+
+                    option_data = {
+                        'strike': strike,
+                        'type': opt_type_label,
+                        'expiration': expiry,
+                        'dte': dte,
+                        'last_price': option.get('lastPrice', 0),
+                        'iv': option.get('impliedVolatility', 0),
+                        'oi': option.get('openInterest', 0),
+                        'volume': option.get('volume', 0),
+                        'bid': option.get('bid', 0),
+                        'ask': option.get('ask', 0)
+                    }
+
+                    # Calculate Greeks if requested
+                    if include_greeks and dte > 0:
+                        dte_years = dte / 365.0
+                        iv_decimal = option.get('impliedVolatility', 0)
+
+                        if current_price > 0 and dte_years > 0 and iv_decimal > 0:
+                            try:
+                                gamma = calculate_gamma(
+                                    S=current_price,
+                                    K=strike,
+                                    T=dte_years,
+                                    sigma=iv_decimal,
+                                    dte_days=dte
+                                )
+                                delta = calculate_delta(
+                                    S=current_price,
+                                    K=strike,
+                                    T=dte_years,
+                                    sigma=iv_decimal,
+                                    option_type=opt_type_label,
+                                    dte_days=dte
+                                )
+                                option_data['gamma'] = gamma
+                                option_data['delta'] = delta
+                            except:
+                                option_data['gamma'] = 0
+                                option_data['delta'] = 0
+
+                    filtered_options.append(option_data)
+
+        if not filtered_options:
+            return {
+                "error": f"No options found for {ticker} in date range {date_range} with volume>={min_volume} and OI>={min_oi}"
+            }
+
+        # Sort by expiration date, then by strike
+        filtered_options.sort(key=lambda x: (x['expiration'], x['strike']))
+
+        return {
+            'ticker': ticker,
+            'current_price': current_price,
+            'date_range': date_range,
+            'start_date': start_date.strftime('%Y-%m-%d'),
+            'end_date': end_date.strftime('%Y-%m-%d'),
+            'filters': {
+                'min_volume': min_volume,
+                'min_oi': min_oi,
+                'option_type': option_type
+            },
+            'options_count': len(filtered_options),
+            'options': filtered_options
+        }
+
+    except Exception as e:
+        return {"error": f"Error filtering options: {str(e)}"}
+
+def format_options_for_chat(results: dict, include_greeks: bool = False) -> str:
+    """
+    Format filtered options results for easy pasting into chat.
+
+    Parameters:
+    results (dict): Results from get_filtered_options_by_date()
+    include_greeks (bool): Whether to include Greeks in output
+
+    Returns:
+    str: Formatted string ready for chat
+    """
+    if "error" in results:
+        return f"Error: {results['error']}"
+
+    output = []
+    output.append(f"📊 {results['ticker']} Option Contracts")
+    output.append(f"Current Price: ${results['current_price']:.2f}")
+    output.append(f"Date Range: {results['start_date']} to {results['end_date']}")
+    output.append(f"Filters: Volume≥{results['filters']['min_volume']}, OI≥{results['filters']['min_oi']}")
+    output.append(f"Found {results['options_count']} contracts")
+    output.append("")
+
+    # Group by expiration date
+    options_by_expiry = {}
+    for opt in results['options']:
+        expiry = opt['expiration']
+        if expiry not in options_by_expiry:
+            options_by_expiry[expiry] = []
+        options_by_expiry[expiry].append(opt)
+
+    # Format each expiration group
+    for expiry in sorted(options_by_expiry.keys()):
+        options = options_by_expiry[expiry]
+        dte = options[0]['dte']
+
+        output.append(f"📅 {expiry} (DTE: {dte})")
+        output.append("-" * 60)
+
+        # Header
+        if include_greeks:
+            output.append(f"{'Type':<5} {'Strike':<8} {'Price':<8} {'IV':<7} {'OI':<9} {'Vol':<9} {'Delta':<8} {'Gamma':<8}")
+        else:
+            output.append(f"{'Type':<5} {'Strike':<8} {'Price':<8} {'IV':<7} {'OI':<9} {'Vol':<9}")
+
+        # Options
+        for opt in sorted(options, key=lambda x: x['strike']):
+            type_label = opt['type'].upper()
+            if include_greeks and 'delta' in opt and 'gamma' in opt:
+                output.append(
+                    f"{type_label:<5} ${opt['strike']:<7.2f} ${opt['last_price']:<7.2f} "
+                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<9,} "
+                    f"{opt['delta']:<8.3f} {opt['gamma']:<8.4f}"
+                )
+            else:
+                output.append(
+                    f"{type_label:<5} ${opt['strike']:<7.2f} ${opt['last_price']:<7.2f} "
+                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<9,}"
+                )
+
+        output.append("")
+
+    return "\n".join(output)
+
 def print_results(undervalued_results, catalyst_results, detailed=False):
     """Print formatted results for both strategies with the new design"""
     # Header and ROI comparison
@@ -621,3 +858,25 @@ if __name__ == "__main__":
     # Show cache statistics
     print("\nCache Statistics:")
     print(get_cache_stats())
+
+# Example usage of the helper functions:
+#
+# To get filtered options by date range:
+# results = get_filtered_options_by_date(
+#     ticker="UAMY",
+#     date_range="11/25-1/26",  # November 25 to January 26
+#     min_volume=100,            # Minimum volume
+#     min_oi=500,                # Minimum open interest
+#     option_type="calls",       # "calls", "puts", or "both"
+#     include_greeks=True        # Include delta and gamma calculations
+# )
+#
+# To format the results for chat:
+# formatted_output = format_options_for_chat(results, include_greeks=True)
+# print(formatted_output)
+#
+# Complete example:
+# if __name__ == "__main__":
+#     clear_cache()
+#     results = get_filtered_options_by_date("UAMY", "11/25-1/26", min_volume=50, min_oi=100)
+#     print(format_options_for_chat(results))
