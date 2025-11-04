@@ -93,16 +93,17 @@ Dictionary containing:
 - `options`: List of option contracts with details
 
 **Option Contract Fields**:
+- `contract_id`: Option contract symbol (e.g., "UAMY251219C00001500")
 - `strike`: Strike price
 - `type`: "call" or "put"
 - `expiration`: Expiration date (YYYY-MM-DD)
 - `dte`: Days to expiration
 - `last_price`: Last traded price
+- `bid`: Bid price
+- `ask`: Ask price
 - `iv`: Implied volatility
 - `oi`: Open interest
 - `volume`: Trading volume
-- `bid`: Bid price
-- `ask`: Ask price
 - `gamma`: Gamma (if include_greeks=True)
 - `delta`: Delta (if include_greeks=True)
 
@@ -140,16 +141,16 @@ Filters: Volume≥100, OI≥500
 Found 15 contracts
 
 📅 2025-12-20 (DTE: 45)
-------------------------------------------------------------
-Type  Strike   Price    IV      OI        Vol
-CALL  $1.50    $0.15    45.2%   1,234     567
-CALL  $2.00    $0.08    52.1%   2,345     890
+--------------------------------------------------------------------------------
+Contract ID               Bid     Ask     Last    IV      OI        Vol
+UAMY251220C00001500       $0.14   $0.16   $0.15   45.2%   1,234     567
+UAMY251220C00002000       $0.07   $0.09   $0.08   52.1%   2,345     890
 
 📅 2026-01-17 (DTE: 73)
-------------------------------------------------------------
-Type  Strike   Price    IV      OI        Vol
-CALL  $1.50    $0.25    48.5%   1,890     456
-CALL  $2.00    $0.12    55.3%   3,456     1,234
+--------------------------------------------------------------------------------
+Contract ID               Bid     Ask     Last    IV      OI        Vol
+UAMY260117C00001500       $0.24   $0.26   $0.25   48.5%   1,890     456
+UAMY260117C00002000       $0.11   $0.13   $0.12   55.3%   3,456     1,234
 ```
 
 **Example**:

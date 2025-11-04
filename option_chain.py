@@ -74,8 +74,8 @@ def get_cached_option_chain(ticker: str, expiration: str) -> Optional[Dict]:
                 
                 # Store only essential data to save memory
                 cached_data = {
-                    'calls': chain.calls[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']],
-                    'puts': chain.puts[['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']]
+                    'calls': chain.calls[['contractSymbol', 'strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']],
+                    'puts': chain.puts[['contractSymbol', 'strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']]
                 }
                 
                 _option_chain_cache[cache_key] = cached_data
@@ -126,10 +126,13 @@ def process_single_expiration(ticker: str, expiration: str, min_dte: int, today:
         if df.empty:
             continue
         # Ensure required columns exist with defaults
-        required_cols = ['strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']
+        required_cols = ['contractSymbol', 'strike', 'openInterest', 'impliedVolatility', 'lastPrice', 'volume', 'bid', 'ask']
         for col in required_cols:
             if col not in df.columns:
-                df[col] = 0.0 if col in ['impliedVolatility', 'lastPrice', 'bid', 'ask'] else 0
+                if col == 'contractSymbol':
+                    df[col] = ''
+                else:
+                    df[col] = 0.0 if col in ['impliedVolatility', 'lastPrice', 'bid', 'ask'] else 0
         # Filter by bid/ask spread
         df['bid_ask_spread'] = (df['ask'] - df['bid']) / df['lastPrice']
         df = df[df['bid_ask_spread'] <= MAX_BID_ASK_SPREAD]

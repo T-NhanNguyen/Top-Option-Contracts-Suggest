@@ -507,18 +507,20 @@ def get_filtered_options_by_date(
                         continue
 
                     strike = option['strike']
+                    contract_id = option.get('contractSymbol', '')
 
                     option_data = {
+                        'contract_id': contract_id,
                         'strike': strike,
                         'type': opt_type_label,
                         'expiration': expiry,
                         'dte': dte,
                         'last_price': option.get('lastPrice', 0),
+                        'bid': option.get('bid', 0),
+                        'ask': option.get('ask', 0),
                         'iv': option.get('impliedVolatility', 0),
                         'oi': option.get('openInterest', 0),
-                        'volume': option.get('volume', 0),
-                        'bid': option.get('bid', 0),
-                        'ask': option.get('ask', 0)
+                        'volume': option.get('volume', 0)
                     }
 
                     # Calculate Greeks if requested
@@ -613,27 +615,28 @@ def format_options_for_chat(results: dict, include_greeks: bool = False) -> str:
         dte = options[0]['dte']
 
         output.append(f"📅 {expiry} (DTE: {dte})")
-        output.append("-" * 60)
+        output.append("-" * 80)
 
         # Header
         if include_greeks:
-            output.append(f"{'Type':<5} {'Strike':<8} {'Price':<8} {'IV':<7} {'OI':<9} {'Vol':<9} {'Delta':<8} {'Gamma':<8}")
+            output.append(f"{'Contract ID':<25} {'Bid':<7} {'Ask':<7} {'Last':<7} {'IV':<7} {'OI':<9} {'Vol':<7} {'Delta':<7} {'Gamma':<7}")
         else:
-            output.append(f"{'Type':<5} {'Strike':<8} {'Price':<8} {'IV':<7} {'OI':<9} {'Vol':<9}")
+            output.append(f"{'Contract ID':<25} {'Bid':<7} {'Ask':<7} {'Last':<7} {'IV':<7} {'OI':<9} {'Vol':<7}")
 
         # Options
         for opt in sorted(options, key=lambda x: x['strike']):
-            type_label = opt['type'].upper()
+            contract_id = opt.get('contract_id', f"{opt['type'].upper()}_{opt['strike']}")
+
             if include_greeks and 'delta' in opt and 'gamma' in opt:
                 output.append(
-                    f"{type_label:<5} ${opt['strike']:<7.2f} ${opt['last_price']:<7.2f} "
-                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<9,} "
-                    f"{opt['delta']:<8.3f} {opt['gamma']:<8.4f}"
+                    f"{contract_id:<25} ${opt['bid']:<6.2f} ${opt['ask']:<6.2f} ${opt['last_price']:<6.2f} "
+                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<7,} "
+                    f"{opt['delta']:<7.3f} {opt['gamma']:<7.4f}"
                 )
             else:
                 output.append(
-                    f"{type_label:<5} ${opt['strike']:<7.2f} ${opt['last_price']:<7.2f} "
-                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<9,}"
+                    f"{contract_id:<25} ${opt['bid']:<6.2f} ${opt['ask']:<6.2f} ${opt['last_price']:<6.2f} "
+                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<7,}"
                 )
 
         output.append("")
