@@ -2,6 +2,38 @@
 
 This document describes the new helper functions added to `main.py` for filtering option contracts by date range with volume and open interest filters.
 
+## Quick Start - Command Line Usage
+
+The easiest way to use the filter is via command line:
+
+```bash
+# Basic usage - filter UAMY calls from 11/25 to 1/26
+python main.py UAMY --date-range 11/25-1/26
+
+# Include Greeks (delta, gamma)
+python main.py UAMY --date-range 11/25-1/26 --greeks
+
+# Filter both calls and puts
+python main.py UAMY --date-range 12/1-12/31 --option-type both
+
+# Custom volume/OI filters
+python main.py UAMY --date-range 11/25-1/26 --min-volume 50 --min-oi 100
+
+# Filter only puts with Greeks
+python main.py SPY --date-range 12/15-1/15 --option-type puts --greeks
+```
+
+## Command-Line Arguments
+
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `ticker` | Stock ticker symbol (required) | - |
+| `--date-range` | Date range in format MM/DD-MM/DD | - |
+| `--option-type` | Filter calls, puts, or both | calls |
+| `--greeks` | Include delta and gamma calculations | False |
+| `--min-volume` | Minimum volume filter | 100 |
+| `--min-oi` | Minimum open interest filter | 500 |
+
 ## Overview
 
 Three new helper functions have been added to `main.py`:
@@ -216,3 +248,18 @@ Common errors:
 - Invalid date range format
 - No options found matching criteria
 - Network/API errors from yfinance
+
+---
+
+## Getting Help
+
+View all available command-line options:
+
+```bash
+python main.py --help
+```
+
+This will show:
+- All available arguments for date filter mode
+- Full analysis mode options
+- Usage examples

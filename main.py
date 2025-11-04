@@ -801,63 +801,119 @@ def print_cross_strategy_analysis(analysis, detailed=False):
                   f"{contract['gamma']:6.4f}")
     
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Options Analysis Tool')
+    parser = argparse.ArgumentParser(
+        description='Options Analysis Tool',
+        epilog='Examples:\n'
+               '  Full analysis:     python main.py AAPL --taylor\n'
+               '  Date filter:       python main.py UAMY --date-range 11/25-1/26\n'
+               '  With Greeks:       python main.py UAMY --date-range 11/25-1/26 --greeks\n'
+               '  Custom filters:    python main.py UAMY --date-range 12/1-12/31 --min-volume 50 --min-oi 100',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    # Required arguments
     parser.add_argument('ticker', help='Stock ticker symbol')
+
+    # Date filter mode arguments
+    parser.add_argument('--date-range', type=str,
+                       help='Filter options by date range (format: MM/DD-MM/DD, e.g., 11/25-1/26)')
+    parser.add_argument('--option-type', choices=['calls', 'puts', 'both'], default='calls',
+                       help='Option type to filter (default: calls)')
+    parser.add_argument('--greeks', action='store_true',
+                       help='Include Greeks (delta, gamma) in date filter output')
+
+    # Common filter arguments
+    parser.add_argument('--min-volume', type=int, default=100,
+                       help='Minimum volume filter (default: 100)')
+    parser.add_argument('--min-oi', type=int, default=500,
+                       help='Minimum open interest filter (default: 500)')
+
+    # Full analysis mode arguments
     parser.add_argument('--taylor', action='store_true', help='Use Taylor series ROI calculation')
-    parser.add_argument('--move', type=float, help='Expected move percentage (e.g., 0.02 for 2%)')
+    parser.add_argument('--move', type=float, help='Expected move percentage (e.g., 0.02 for 2%%)')
     parser.add_argument('--detailed', action='store_true', help='Show detailed tables')
-    parser.add_argument('--strategy', choices=['undervalued', 'catalyst'], default='undervalued', 
+    parser.add_argument('--strategy', choices=['undervalued', 'catalyst'], default='undervalued',
                        help='Analysis strategy')
     parser.add_argument('--min-dte', type=int, default=30, help='Minimum days to expiration')
     parser.add_argument('--investment', type=float, default=10000, help='Investment amount')
-    
+
     args = parser.parse_args()
-    
+
     ticker = args.ticker.upper()
-    use_taylor = args.taylor
-    forecast_move = args.move
-    detailed = args.detailed
-    
+
     # Clear any previous cache
     clear_cache()
-    
-    # Analyze a stock with both strategies
-    ascii_art_print.print_wizard_message(f"Running analysis for {ticker}...")
-    
-    results_undervalued = find_highest_roi_options(
-        ticker=ticker,
-        strategy="undervalued",
-        min_dte=45,
-        investment_amount=5000,
-        min_volume=100,
-        min_oi=500,
-        use_taylor_series=use_taylor,
-        forecast_move_percent=forecast_move
-    )
-    
-    results_catalyst = find_highest_roi_options(
-        ticker=ticker,
-        strategy="catalyst",
-        min_dte=30,
-        max_dte=90,
-        investment_amount=5000,
-        min_volume=100,
-        min_oi=500,
-        target_price_multiplier=1.5,  # 50% move for catalyst
-        use_taylor_series=use_taylor,
-        forecast_move_percent=forecast_move
-    )
 
-    # Print combined results
-    print_results(results_undervalued, results_catalyst, detailed)
+    # Check if date filter mode is requested
+    if args.date_range:
+        # Date filter mode - use the new helper functions
+        print(f"Filtering {ticker} options by date range: {args.date_range}")
+        print(f"Filters: Volume ≥ {args.min_volume}, OI ≥ {args.min_oi}, Type: {args.option_type}")
+        print("=" * 60)
 
-    # print("\n" + "=" * 80 + "\n")
-    cross_analysis = analyze_cross_strategy_opportunities(results_undervalued, results_catalyst)
-    print_cross_strategy_analysis(cross_analysis, detailed)
-    
-    # Show cache statistics
-    print("\nCache Statistics:")
-    print(get_cache_stats())
+        results = get_filtered_options_by_date(
+            ticker=ticker,
+            date_range=args.date_range,
+            min_volume=args.min_volume,
+            min_oi=args.min_oi,
+            option_type=args.option_type,
+            include_greeks=args.greeks
+        )
+
+        if "error" in results:
+            print(f"\nError: {results['error']}")
+        else:
+            # Format and print results
+            formatted = format_options_for_chat(results, include_greeks=args.greeks)
+            print(formatted)
+
+            # Show summary
+            print("\n" + "=" * 60)
+            print(f"Summary: Found {results['options_count']} contracts")
+            print("Ready to copy and paste into chat!")
+    else:
+        # Full analysis mode - original functionality
+        use_taylor = args.taylor
+        forecast_move = args.move
+        detailed = args.detailed
+
+        # Analyze a stock with both strategies
+        ascii_art_print.print_wizard_message(f"Running analysis for {ticker}...")
+
+        results_undervalued = find_highest_roi_options(
+            ticker=ticker,
+            strategy="undervalued",
+            min_dte=45,
+            investment_amount=5000,
+            min_volume=args.min_volume,
+            min_oi=args.min_oi,
+            use_taylor_series=use_taylor,
+            forecast_move_percent=forecast_move
+        )
+
+        results_catalyst = find_highest_roi_options(
+            ticker=ticker,
+            strategy="catalyst",
+            min_dte=30,
+            max_dte=90,
+            investment_amount=5000,
+            min_volume=args.min_volume,
+            min_oi=args.min_oi,
+            target_price_multiplier=1.5,  # 50% move for catalyst
+            use_taylor_series=use_taylor,
+            forecast_move_percent=forecast_move
+        )
+
+        # Print combined results
+        print_results(results_undervalued, results_catalyst, detailed)
+
+        # print("\n" + "=" * 80 + "\n")
+        cross_analysis = analyze_cross_strategy_opportunities(results_undervalued, results_catalyst)
+        print_cross_strategy_analysis(cross_analysis, detailed)
+
+        # Show cache statistics
+        print("\nCache Statistics:")
+        print(get_cache_stats())
 
 # Example usage of the helper functions:
 #
