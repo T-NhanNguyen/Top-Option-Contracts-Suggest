@@ -13,14 +13,20 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
+import argparse
 import warnings
 warnings.filterwarnings('ignore')
 
 
-def get_weekend_crypto_signal():
+def get_weekend_crypto_signal(mode='weekend'):
     """
     Implements the research methodology.
-    Call this Sunday 8-10 PM ET.
+
+    Parameters:
+    mode (str): 'weekend' for original weekend data (Friday-Sunday)
+                '24h' for current time and 24 hours before
+
+    Call this Sunday 8-10 PM ET for weekend mode.
     """
     
     # Top 20 cryptos (as per paper)
@@ -34,48 +40,58 @@ def get_weekend_crypto_signal():
     
     results = []
     errors = []
-    
+
     # print(f"\nFetching weekend crypto data...")
     # print(f"{'='*49}\n")
-    # Determine which Friday and Sunday to use based on today
+    # Determine which time period to use based on mode
     today = datetime.now()
-    today_weekday = today.weekday()  # 0=Monday, 4=Friday, 6=Sunday
-    
-    # Calculate the most recent Friday and Sunday
-    if today_weekday == 6:  # Today is Sunday
-        # Use this Friday (2 days ago) and current time
-        days_to_friday = 2
-        days_to_sunday = 0
-        print(f"📅 Analyzing THIS weekend: Friday {(today - timedelta(days=2)).strftime('%b %d')} → Sunday {today.strftime('%b %d')} (today)")
-    elif today_weekday == 5:  # Today is Saturday
-        # Use yesterday (Friday) and tomorrow (Sunday estimated)
-        days_to_friday = 1
-        days_to_sunday = 0  # Use current data as proxy
-        print(f"📅 Analyzing THIS weekend: Friday {(today - timedelta(days=1)).strftime('%b %d')} → Saturday {today.strftime('%b %d')} (today)")
-        print(f"    Note: Sunday data not available yet, using Saturday as proxy\n")
-    elif today_weekday == 4:  # Today is Friday
-        # Can't analyze weekend yet - use LAST weekend
-        days_to_friday = 7
-        days_to_sunday = 5
-        print(f"📅 Today is Friday - analyzing LAST weekend: Friday {(today - timedelta(days=7)).strftime('%b %d')} → Sunday {(today - timedelta(days=5)).strftime('%b %d')}")
-        print(f"    Run this script on Sunday evening for current weekend prediction\n")
-    else:  # Monday-Thursday (0-3)
-        # Use LAST Friday and Sunday
-        days_to_last_friday = (today_weekday + 3) % 7  # Days back to last Friday
-        if days_to_last_friday == 0:
-            days_to_last_friday = 7
-        days_to_last_sunday = (today_weekday + 1) % 7  # Days back to last Sunday  
-        if days_to_last_sunday == 0:
-            days_to_last_sunday = 7
-        
-        days_to_friday = days_to_last_friday
-        days_to_sunday = days_to_last_sunday
-        print(f"📅 Analyzing LAST weekend: Friday {(today - timedelta(days=days_to_friday)).strftime('%b %d')} → Sunday {(today - timedelta(days=days_to_sunday)).strftime('%b %d')}")
-    
-    friday_date = today - timedelta(days=days_to_friday)
-    sunday_date = today - timedelta(days=days_to_sunday) if days_to_sunday > 0 else today
-    
-    print(f"    Timeframe: {friday_date.strftime('%Y-%m-%d')} to {sunday_date.strftime('%Y-%m-%d')}\n")
+
+    if mode == '24h':
+        # Simple 24-hour lookback
+        end_date = today
+        start_date = today - timedelta(hours=24)
+        print(f"📅 Analyzing LAST 24 HOURS: {start_date.strftime('%Y-%m-%d %H:%M')} → {end_date.strftime('%Y-%m-%d %H:%M')}\n")
+        friday_date = start_date
+        sunday_date = end_date
+    else:
+        # Original weekend logic
+        today_weekday = today.weekday()  # 0=Monday, 4=Friday, 6=Sunday
+
+        # Calculate the most recent Friday and Sunday
+        if today_weekday == 6:  # Today is Sunday
+            # Use this Friday (2 days ago) and current time
+            days_to_friday = 2
+            days_to_sunday = 0
+            print(f"📅 Analyzing THIS weekend: Friday {(today - timedelta(days=2)).strftime('%b %d')} → Sunday {today.strftime('%b %d')} (today)")
+        elif today_weekday == 5:  # Today is Saturday
+            # Use yesterday (Friday) and tomorrow (Sunday estimated)
+            days_to_friday = 1
+            days_to_sunday = 0  # Use current data as proxy
+            print(f"📅 Analyzing THIS weekend: Friday {(today - timedelta(days=1)).strftime('%b %d')} → Saturday {today.strftime('%b %d')} (today)")
+            print(f"    Note: Sunday data not available yet, using Saturday as proxy\n")
+        elif today_weekday == 4:  # Today is Friday
+            # Can't analyze weekend yet - use LAST weekend
+            days_to_friday = 7
+            days_to_sunday = 5
+            print(f"📅 Today is Friday - analyzing LAST weekend: Friday {(today - timedelta(days=7)).strftime('%b %d')} → Sunday {(today - timedelta(days=5)).strftime('%b %d')}")
+            print(f"    Run this script on Sunday evening for current weekend prediction\n")
+        else:  # Monday-Thursday (0-3)
+            # Use LAST Friday and Sunday
+            days_to_last_friday = (today_weekday + 3) % 7  # Days back to last Friday
+            if days_to_last_friday == 0:
+                days_to_last_friday = 7
+            days_to_last_sunday = (today_weekday + 1) % 7  # Days back to last Sunday
+            if days_to_last_sunday == 0:
+                days_to_last_sunday = 7
+
+            days_to_friday = days_to_last_friday
+            days_to_sunday = days_to_last_sunday
+            print(f"📅 Analyzing LAST weekend: Friday {(today - timedelta(days=days_to_friday)).strftime('%b %d')} → Sunday {(today - timedelta(days=days_to_sunday)).strftime('%b %d')}")
+
+        friday_date = today - timedelta(days=days_to_friday)
+        sunday_date = today - timedelta(days=days_to_sunday) if days_to_sunday > 0 else today
+
+        print(f"    Timeframe: {friday_date.strftime('%Y-%m-%d')} to {sunday_date.strftime('%Y-%m-%d')}\n")
     for crypto in cryptos:
         try:
             # Get data for past 7 days
@@ -279,16 +295,33 @@ def get_btc_eth_focus():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description='Crypto Weekend Effect - Monday Stock Market Predictor',
+        epilog='Examples:\n'
+               '  Weekend mode:  python predicting_monday_with_crypto.py\n'
+               '  24-hour mode:  python predicting_monday_with_crypto.py --mode 24h',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    parser.add_argument('--mode', choices=['weekend', '24h'], default='weekend',
+                       help='Analysis mode: "weekend" for Friday-Sunday (default), "24h" for last 24 hours')
+
+    args = parser.parse_args()
+
     print("\n" + "="*49)
     print("CRYPTO WEEKEND EFFECT - MONDAY STOCK PREDICTOR")
     print("Based on peer-reviewed research (Mourey et al., 2025)")
+    print(f"Mode: {args.mode.upper()}")
     print("="*49)
-    
-    # Run full analysis
-    df = get_weekend_crypto_signal()
-    
+
+    # Run full analysis with selected mode
+    df = get_weekend_crypto_signal(mode=args.mode)
+
     # Also show quick BTC/ETH check
     get_btc_eth_focus()
-    
+
     print("\n📊 Analysis complete!")
-    print("⏰ Best time to run this: Sunday 8-10 PM ET\n")
+    if args.mode == 'weekend':
+        print("⏰ Best time to run this: Sunday 8-10 PM ET\n")
+    else:
+        print("⏰ 24h mode: Run anytime for last 24-hour signal\n")
