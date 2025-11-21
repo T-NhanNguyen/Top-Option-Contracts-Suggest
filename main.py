@@ -1,6 +1,6 @@
 import pandas as pd
 from datetime import datetime, timedelta
-from option_chain import get_option_chain_analysis_optimized, clear_cache, get_cache_stats
+from option_chain import get_option_chain_analysis_optimized, clear_cache, get_cache_stats, get_put_call_ratio
 from gamma_calculator import gamma_calculator, calculate_gamma, calculate_delta
 from option_roi import OptionROIAnalyzer
 import ascii_art_print

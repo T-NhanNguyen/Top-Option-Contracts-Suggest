@@ -157,6 +157,63 @@ def process_single_expiration(ticker: str, expiration: str, min_dte: int, today:
         'avg_iv': avg_iv
     }
 
+def get_put_call_ratio(ticker: str, expiration: str = None):
+    """
+    Calculate put/call ratio using existing cached option chain data.
+    
+    Returns:
+    - Volume P/C Ratio: Total put volume / Total call volume
+    - OI P/C Ratio: Total put open interest / Total call open interest
+    """
+    if expiration:
+        # Single expiration
+        chain = get_cached_option_chain(ticker, expiration)
+        if not chain:
+            return {"error": f"No data for {ticker} {expiration}"}
+        
+        calls = chain['calls']
+        puts = chain['puts']
+        
+        call_volume = calls['volume'].sum()
+        put_volume = puts['volume'].sum()
+        call_oi = calls['openInterest'].sum()
+        put_oi = puts['openInterest'].sum()
+        
+        return {
+            'expiration': expiration,
+            'volume_pcr': put_volume / call_volume if call_volume > 0 else 0,
+            'oi_pcr': put_oi / call_oi if call_oi > 0 else 0,
+            'call_volume': int(call_volume),
+            'put_volume': int(put_volume),
+            'call_oi': int(call_oi),
+            'put_oi': int(put_oi)
+        }
+    else:
+        # All expirations
+        expirations = get_cached_expirations(ticker)
+        total_call_vol = 0
+        total_put_vol = 0
+        total_call_oi = 0
+        total_put_oi = 0
+        
+        for exp in expirations:
+            chain = get_cached_option_chain(ticker, exp)
+            if chain:
+                total_call_vol += chain['calls']['volume'].sum()
+                total_put_vol += chain['puts']['volume'].sum()
+                total_call_oi += chain['calls']['openInterest'].sum()
+                total_put_oi += chain['puts']['openInterest'].sum()
+        
+        return {
+            'ticker': ticker,
+            'volume_pcr': total_put_vol / total_call_vol if total_call_vol > 0 else 0,
+            'oi_pcr': total_put_oi / total_call_oi if total_call_oi > 0 else 0,
+            'total_call_volume': int(total_call_vol),
+            'total_put_volume': int(total_put_vol),
+            'total_call_oi': int(total_call_oi),
+            'total_put_oi': int(total_put_oi)
+        }
+
 def get_option_chain_analysis_optimized(ticker: str, min_dte: int = 45) -> Dict:
     """
     Optimized option chain analysis with all requested enhancements
@@ -224,7 +281,7 @@ def get_cache_stats() -> Dict:
         }
 
 # Example usage with optimized features
-if __name__ == "__main__":
+def test_optimized_features():
     ticker = "AAPL"
     min_dte = 45
     
@@ -318,3 +375,109 @@ if __name__ == "__main__":
         
         clear_cache()
         print(f"Cache after clearing: {get_cache_stats()}")
+
+def test_putcall_ratio():
+    expiration_date = "2025-11-21"
+    print("\n" + "=" * 60)
+    print("TESTING PUT/CALL RATIO CALCULATION...")
+    
+    sectors_data = {
+        "Materials": ["XLB", "VAW", "IYM"],
+        "Comm. Services": ["XLC", "VOX", "IYZ"],
+        "Energy": ["XLE", "VDE", "IYE"],
+        "Financials": ["XLF", "VFH", "IYF"],
+        "Industrials": ["XLI", "VIS", "IYJ"],
+        "Technology": ["XLK", "VGT", "IYW"],
+        "Consumer Staples": ["XLP", "VDC", "IYK"],
+        "Consumer Discret.": ["XLY", "VCR", "IYC"],
+        "Health Care": ["XLV", "VHT", "IYH"],
+        "Utilities": ["XLU", "VPU", "IDU"],
+        "Real Estate": ["XLRE", "VNQ", "IYR"]
+    }
+    providers = ["SPDR", "Vanguard", "iShares", "Average"]
+    all_tickers = []
+    for sector_tickers in sectors_data.values():
+        all_tickers.extend(sector_tickers)
+    
+    results = {}  # Will store {ticker: ratio_dict} for successful fetches
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        future_to_ticker = {
+            executor.submit(get_put_call_ratio, ticker, expiration_date): ticker 
+            for ticker in all_tickers
+        }
+        
+        for future in concurrent.futures.as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
+            try:
+                result = future.result()
+                results[ticker] = result
+                # Check if result is an error
+                if 'error' in result:
+                    print(f"✗ Failed: {ticker} - {result['error']}")
+                else:
+                    print(f"✓ Completed: {ticker}")
+            except Exception as e:
+                print(f"✗ Failed: {ticker} - {str(e)}")
+                # Store None values for failed tickers
+                results[ticker] = {'volume_pcr': None, 'oi_pcr': None}
+    
+    # Build table data: dict of sectors -> list of [vol_pcr, oi_pcr] per provider + average
+    table_data = {}
+    for sector, tickers in sectors_data.items():
+        vols = []
+        ois = []
+        sector_results = []
+        for i, ticker in enumerate(tickers):
+            ratio = results.get(ticker, {})
+            
+            # Use .get() to safely access keys (handles error dicts)
+            vol = ratio.get('volume_pcr')
+            oi = ratio.get('oi_pcr')
+            
+            # Format as "Vol: X.XX / OI: Y.YY" or "N/A" if failed
+            if vol is not None and oi is not None:
+                vols.append(vol)
+                ois.append(oi)
+                sector_results.append(f"{vol:.2f} / {oi:.2f}")
+            else:
+                sector_results.append("N/A")
+        
+        # Compute sector average (across successful providers only)
+        if vols:
+            avg_vol = sum(vols) / len(vols)
+            avg_oi = sum(ois) / len(ois)
+            avg_str = f"{avg_vol:.2f} / {avg_oi:.2f}"
+        else:
+            avg_str = "N/A"
+        sector_results.append(avg_str)  # Add average as fourth item
+        
+        table_data[sector] = sector_results 
+    
+    # Intuitive output: Markdown table (rows: sectors, columns: providers)
+    print("\n" + "=" * 90)
+    print("PUT/CALL RATIOS BY SECTOR AND PROVIDER")
+    print("(Volume PCR / OI PCR; N/A if fetch failed; Average across successful providers)")
+    print("-" * 90)
+    
+    # Header
+    header = "| Sector\t\t| " + " | ".join([f"{prov:^9}" for prov in providers]) + " |"
+    print(header)
+    print("|" + "-" * 22 + "|" + ("-" * 11) * len(providers) + "|")
+    
+    # Rows
+    for sector, values in table_data.items():
+        row = f"| {sector:<20} | " + " | ".join([f"{val:^9}" for val in values]) + " |"
+        print(row)
+    
+    print("-" * 90)
+    
+    print(f"\nFinal cache stats: {get_cache_stats()}")
+
+if __name__ == "__main__":
+    # test_optimized_features()
+    test_putcall_ratio()
+    # ratio = get_put_call_ratio("SPY")
+    # print(f"Volume P/C Ratio: {ratio['volume_pcr']:.2f}")
+    # print(f"OI P/C Ratio: {ratio['oi_pcr']:.2f}")
+    
