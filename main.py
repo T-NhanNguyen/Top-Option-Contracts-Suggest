@@ -500,14 +500,38 @@ def get_filtered_options_by_date(
 
             for opt_type_key, opt_type_label in types_to_process:
                 for option in data[opt_type_key]:
-                    # Apply volume and OI filters
-                    if option.get('volume', 0) < min_volume:
+                    # Extract values and handle NaN
+                    volume = option.get('volume', 0)
+                    oi = option.get('openInterest', 0)
+
+                    # Skip if volume or OI is NaN
+                    if pd.isna(volume) or pd.isna(oi):
                         continue
-                    if option.get('openInterest', 0) < min_oi:
+
+                    # Apply volume and OI filters
+                    if volume < min_volume:
+                        continue
+                    if oi < min_oi:
                         continue
 
                     strike = option['strike']
                     contract_id = option.get('contractSymbol', '')
+
+                    # Extract other values, replacing NaN with 0
+                    last_price = option.get('lastPrice', 0)
+                    bid = option.get('bid', 0)
+                    ask = option.get('ask', 0)
+                    iv = option.get('impliedVolatility', 0)
+
+                    # Replace NaN with 0 for numeric fields
+                    if pd.isna(last_price):
+                        last_price = 0
+                    if pd.isna(bid):
+                        bid = 0
+                    if pd.isna(ask):
+                        ask = 0
+                    if pd.isna(iv):
+                        iv = 0
 
                     option_data = {
                         'contract_id': contract_id,
@@ -515,12 +539,12 @@ def get_filtered_options_by_date(
                         'type': opt_type_label,
                         'expiration': expiry,
                         'dte': dte,
-                        'last_price': option.get('lastPrice', 0),
-                        'bid': option.get('bid', 0),
-                        'ask': option.get('ask', 0),
-                        'iv': option.get('impliedVolatility', 0),
-                        'oi': option.get('openInterest', 0),
-                        'volume': option.get('volume', 0)
+                        'last_price': last_price,
+                        'bid': bid,
+                        'ask': ask,
+                        'iv': iv,
+                        'oi': oi,
+                        'volume': volume
                     }
 
                     # Calculate Greeks if requested
@@ -627,16 +651,31 @@ def format_options_for_chat(results: dict, include_greeks: bool = False) -> str:
         for opt in sorted(options, key=lambda x: x['strike']):
             contract_id = opt.get('contract_id', f"{opt['type'].upper()}_{opt['strike']}")
 
+            # Safely handle NaN values for OI and volume
+            oi_value = opt['oi']
+            volume_value = opt['volume']
+
+            # Convert to int, handling NaN
+            if pd.isna(oi_value) or oi_value is None:
+                oi_str = "N/A"
+            else:
+                oi_str = f"{int(oi_value):,}"
+
+            if pd.isna(volume_value) or volume_value is None:
+                vol_str = "N/A"
+            else:
+                vol_str = f"{int(volume_value):,}"
+
             if include_greeks and 'delta' in opt and 'gamma' in opt:
                 output.append(
                     f"{contract_id:<25} ${opt['bid']:<6.2f} ${opt['ask']:<6.2f} ${opt['last_price']:<6.2f} "
-                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<7,} "
+                    f"{opt['iv']:<6.1%} {oi_str:<9} {vol_str:<7} "
                     f"{opt['delta']:<7.3f} {opt['gamma']:<7.4f}"
                 )
             else:
                 output.append(
                     f"{contract_id:<25} ${opt['bid']:<6.2f} ${opt['ask']:<6.2f} ${opt['last_price']:<6.2f} "
-                    f"{opt['iv']:<6.1%} {int(opt['oi']):<9,} {int(opt['volume']):<7,}"
+                    f"{opt['iv']:<6.1%} {oi_str:<9} {vol_str:<7}"
                 )
 
         output.append("")
